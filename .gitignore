@@ -1,0 +1,22 @@
+# Never commit game files or anything generated from them.
+*.wasm
+*.rpf
+mirror/
+app/Generated/
+app/Tools/
+app/Build/
+app/Resources/manifest.json
+app/Resources/wgpu_worker.js
+app/*.xcodeproj
+*.ipa
+.DS_Store
+
+.local-tools/
+__pycache__/
+extracted_v1.5.2/
+
+relay/node_modules/
+relay/.wrangler/
+relay/.dev.vars
+
+/vendor/mugoat-r007/native-port/online-bridge/target/
