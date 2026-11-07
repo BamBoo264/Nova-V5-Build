@@ -1,66 +1,64 @@
-name: Build Nova V5 privately on macOS
+name: Build Nova V6 UDP IPA
 on:
   workflow_dispatch:
     inputs:
       source_sha:
-        description: Full commit SHA on the private Nova V5 branch
+        description: Full commit SHA of the Nova V6 source
         required: true
         type: string
 permissions:
   contents: read
+concurrency:
+  group: nova-v6-ipa
+  cancel-in-progress: true
 jobs:
   build:
     runs-on: macos-15
     timeout-minutes: 120
     steps:
-      - name: Check out the private Nova V5 branch
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           repository: BamBoo264/Mugoat-Ios
-          ref: nova-native-runtime-v5-online
+          ref: ${{ inputs.source_sha }}
           ssh-key: ${{ secrets.NOVA_SOURCE_SSH_KEY }}
           persist-credentials: false
-      - name: Verify checkout and prepare toolchain
+      - name: Validate source and iOS bridge
         env:
           SOURCE_SHA: ${{ inputs.source_sha }}
-          AGE_RECIPIENT: ${{ vars.NOVA_ARTIFACT_RECIPIENT }}
         run: |
           test "$(uname -m)" = arm64
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          [[ "$AGE_RECIPIENT" == ssh-ed25519\ * ]]
-          brew install xcodegen age
-      - name: Compile and package Nova
+          python3 tools/test_nova_integrity.py
+          python3 tools/test_nova_online.py
+          manifest=vendor/mugoat-r007/native-port/online-bridge/Cargo.toml
+          cargo test --locked --manifest-path "$manifest"
+          cargo build --locked --release --manifest-path "$manifest" --bin mugoat-server
+          node vendor/mugoat-r007/tools/test-server.cjs "${manifest%/*}/target/release/mugoat-server"
+          xcrun swiftc -typecheck -parse-as-library -target arm64-apple-ios15.0 -sdk "$(xcrun --sdk iphoneos --show-sdk-path)" -import-objc-header app/Source/Native-Bridging-Header.h -I app/Source -I app/App/GameInstaller app/App/*.swift app/App/GameInstaller/*.swift
+      - name: Prepare engine and Rust bridge
+        run: |
+          command -v xcodegen || brew install xcodegen
+          xcrun -sdk iphoneos metal --version || xcodebuild -downloadComponent MetalToolchain
+          export PGMSL_PREBUILT_URL="file://$PWD/build-tools/pgmsl-macos-arm64.tar.gz"
+          python3 app/Scripts/assemble_inputs.py --inputs . --out "$RUNNER_TEMP/game-files"
+          cd app
+          python3 Scripts/prepare.py --mirror "$RUNNER_TEMP/game-files"
+          python3 Scripts/verify_nova_native_base.py
+      - name: Compile Nova ARM64 Release
         env:
           JOBS: '3'
+          NOVA_PREPARED: '1'
         run: |
-          export PGMSL_PREBUILT_URL="file://$PWD/build-tools/pgmsl-macos-arm64.tar.gz"
-          {
-            xcrun -sdk iphoneos metal --version || xcodebuild -downloadComponent MetalToolchain
-            python3 tools/test_nova_integrity.py
-            python3 tools/test_nova_online.py
-            xcrun swiftc -typecheck -parse-as-library -target arm64-apple-ios15.0 -sdk "$(xcrun --sdk iphoneos --show-sdk-path)" -import-objc-header app/Source/Native-Bridging-Header.h -I app/Source -I app/App/GameInstaller app/App/*.swift app/App/GameInstaller/*.swift
-            python3 app/Scripts/assemble_inputs.py --inputs . --out "$RUNNER_TEMP/game-files"
-            bash build_ipa.sh --mirror "$RUNNER_TEMP/game-files"
-            python3 tools/package_variants.py
-          } >"$RUNNER_TEMP/nova-build.log" 2>&1
-      - name: Encrypt build output and diagnostics
-        if: ${{ always() }}
-        env:
-          AGE_RECIPIENT: ${{ vars.NOVA_ARTIFACT_RECIPIENT }}
-        run: |
-          [[ "$AGE_RECIPIENT" == ssh-ed25519\ * ]]
-          mkdir -p "$RUNNER_TEMP/encrypted"
-          if [[ -f Mugoat-Nova-NativeRuntime-V5-Online.ipa ]]; then
-            age -r "$AGE_RECIPIENT" -o "$RUNNER_TEMP/encrypted/Nova-V5.ipa.age" Mugoat-Nova-NativeRuntime-V5-Online.ipa
+          if ! bash build_ipa.sh --mirror "$RUNNER_TEMP/game-files" > "$RUNNER_TEMP/nova-build.log" 2>&1; then
+            grep -E 'error:|undefined symbol|fatal:|failed|ld:' "$RUNNER_TEMP/nova-build.log" app/Build/xcodebuild.log | cut -c1-500 | tail -40 || true
+            exit 1
           fi
-          if [[ -f "$RUNNER_TEMP/nova-build.log" ]]; then
-            age -r "$AGE_RECIPIENT" -o "$RUNNER_TEMP/encrypted/nova-build.log.age" "$RUNNER_TEMP/nova-build.log"
-          fi
+      - name: Package and verify direct IPA
+        run: python3 tools/package_variants.py
       - uses: actions/upload-artifact@v4
-        if: ${{ always() }}
         with:
-          name: Nova-V5-encrypted
-          path: ${{ runner.temp }}/encrypted/*.age
-          if-no-files-found: ignore
-          retention-days: 3
+          name: Nova-V6-UDP
+          path: Mugoat-Nova-NativeRuntime-V6-UDP.ipa
+          if-no-files-found: error
+          retention-days: 14
