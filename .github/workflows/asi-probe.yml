@@ -1,0 +1,129 @@
+name: Compare ASI startup on macOS
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: BamBoo264/Mugoat-Ios
+          ref: nova-native-runtime-v8-lspatrol
+          ssh-key: ${{ secrets.NOVA_SOURCE_SSH_KEY }}
+          fetch-depth: 24
+          persist-credentials: false
+      - name: Compile Blink for the headless startup test
+        run: |
+          mkdir "$RUNNER_TEMP/blink-objects"
+          cd "$RUNNER_TEMP/blink-objects"
+          vendor="$GITHUB_WORKSPACE/app/Vendor/blink"
+          find "$vendor/blink" -maxdepth 1 -name '*.c' -print0 | xargs -0 -P 4 -n 1 clang -O2 -DNDEBUG -w -D_GNU_SOURCE -I"$vendor" -c
+          ar rcs libblink.a ./*.o
+      - name: Compare original LSPatrol ZIP on V7 and V8
+        run: |
+          set -euo pipefail
+          scratch="$RUNNER_TEMP/lspatrol"
+          mkdir "$scratch"
+          cd "$scratch"
+          curl --fail --location --retry 2 -sS 'https://files.gta5-mods.com/uploads/lspatrol-police-mod/71bc7c-LSPatrol-v0.5.zip' -o original.zip
+          echo 'cfef9fc8ebb0e11cefffe1490d65a1ee3dc5078d6cfb0ade95a09ea3d80d5c54  original.zip' | shasum -a 256 -c
+          cat > harness.c <<'C_SOURCE'
+          #include "NativeASI.h"
+          #include <stdbool.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <unistd.h>
+          
+          static uint8_t *memory;
+          static uint64_t next = 0x200000;
+          static bool keys[256];
+          
+          static uint64_t allocate(uint64_t size) {
+            uint64_t result = next;
+            next += (size + 15) & ~15ull;
+            if (next >= 128 * 1024 * 1024) abort();
+            return result;
+          }
+          static void release(uint64_t address) { (void)address; }
+          static void logLine(const char *line) { puts(line); fflush(stdout); }
+          static bool key(int code) { return keys[code]; }
+          static bool invoke(uint64_t hash, uint64_t args, uint32_t count, uint64_t result) {
+            if (hash == 0x9cd27b0045628463ull) { // GET_GAME_TIMER
+              static uint32_t time;
+              time += 20;
+              memcpy(memory + result, &time, 4);
+            }
+            return true;
+          }
+          int main(int argc, char **argv) {
+            if (argc != 3) return 2;
+            memory = calloc(1, 128 * 1024 * 1024);
+            PGAsiHost host = {.memory = memory, .size = 128 * 1024 * 1024, .alloc = allocate,
+              .free = release, .log = logLine, .native = invoke, .key_down = key,
+              .game_version = 2189, .files = argv[2]};
+            if (!memory || !pg_asi_init(&host)) return 3;
+            FILE *file = fopen(argv[1], "rb");
+            if (!file || fseek(file, 0, SEEK_END)) return 4;
+            long len = ftell(file);
+            if (len < 1 || fseek(file, 0, SEEK_SET)) return 4;
+            uint8_t *bytes = malloc(len);
+            if (!bytes || fread(bytes, 1, len, file) != (size_t)len) return 4;
+            fclose(file);
+            if (!pg_asi_load("LSPatrol.asi", argv[2], bytes, len)) return 5;
+            free(bytes);
+            for (int frame = 0; frame < 180; ++frame) {
+              if (frame == 45 || frame == 46) {
+                keys[0x79] = frame == 45;
+                pg_asi_key(0x79, keys[0x79]);
+              }
+              pg_asi_tick();
+              usleep(16667);
+            }
+            PGAsiKeyInfo info = {0};
+            pg_asi_key_info(&info);
+            printf("Harness result: keyboard=%d menu=%d F10=%u\n",info.keyboardHandler,info.menuVisible,info.opens[0x79]);
+            return 0;
+          }
+          C_SOURCE
+          cat > trace.py <<'PY_SOURCE'
+          import os,sys
+          from pathlib import Path
+          root=Path(sys.argv[1])
+          f=root/'NativeASI.c'
+          s=f.read_text()
+          code=r'''
+            const char *api = stubName[i];
+            const bool fileCall = !strcmp(api,"CreateFile2") || !strcmp(api,"CreateFileW") ||
+                !strcmp(api,"FindFirstFileW") || !strcmp(api,"FindFirstFileExW") ||
+                !strcmp(api,"GetFileAttributesExW") || !strcmp(api,"CreateDirectoryW") ||
+                !strcmp(api,"MoveFileExW") || !strcmp(api,"GetFileInformationByHandleEx") ||
+                !strcmp(api,"SetFileInformationByHandle");
+            if (fileCall) {
+              char path[512]="";
+              if (strstr(api,"ByHandle")==NULL) wToUtf8(ARG(0),-1,path,sizeof path);
+              logf_("File call %s [%s] arg1=%llx arg3=%llx",api,path,(unsigned long long)ARG(1),(unsigned long long)ARG(3));
+            }
+          '''
+          s=s.replace('  rawReturn = false;\n  uint64_t ret = stubFn[i]();','  rawReturn = false;\n'+code+'  uint64_t ret = stubFn[i]();\n  if (fileCall) logf_("File result %s=%llx", api, (unsigned long long)ret);')
+          f.write_text(s)
+          
+          PY_SOURCE
+          for version in v7 v8; do
+            echo "=== $version ==="
+            mkdir -p "$version/src" "$version/fixture"
+            unzip -qq original.zip 'LSPatrol.asi' 'LSPatrol/Callouts/*' -d "$version/fixture"
+            rev=c2ae494
+            if [ "$version" = v7 ]; then rev=0fc75ec; fi
+            for path in NativeASI.c NativeASI.h NativeASIRuntime.inc; do
+              git -C "$GITHUB_WORKSPACE" show "$rev:app/Source/$path" > "$version/src/$path"
+            done
+            python3 trace.py "$version/src"
+            clang -O2 -w -I"$version/src" -I"$GITHUB_WORKSPACE/app/Vendor/blink" harness.c "$version/src/NativeASI.c" "$RUNNER_TEMP/blink-objects/libblink.a" -o "$version/harness"
+            "$version/harness" "$scratch/$version/fixture/LSPatrol.asi" "$scratch/$version/fixture" > "$version/run.log" 2>&1 || true
+            grep -Ei 'registered|File (call|result)|exception|too long|fault|function|Harness result|aborted' "$version/run.log" | head -160 || true
+            find "$version/fixture/LSPatrol" -maxdepth 1 -type f -exec wc -c {} +
+          done
