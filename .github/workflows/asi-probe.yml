@@ -116,7 +116,7 @@ jobs:
             echo "=== $version ==="
             mkdir -p "$version/src" "$version/fixture"
             unzip -qq original.zip 'LSPatrol.asi' 'LSPatrol/Callouts/*' -d "$version/fixture"
-            rev=17e15a4
+            rev=19ce47a
             if [ "$version" = v7 ]; then rev=0fc75ec; fi
             for path in NativeASI.c NativeASI.h NativeASIRuntime.inc; do
               git -C "$GITHUB_WORKSPACE" show "$rev:app/Source/$path" > "$version/src/$path"
@@ -125,6 +125,8 @@ jobs:
             clang -O2 -w -I"$version/src" -I"$GITHUB_WORKSPACE/app/Vendor/blink" harness.c "$version/src/NativeASI.c" "$RUNNER_TEMP/blink-objects/libblink.a" -o "$version/harness"
             ASI_TRACE=1 "$version/harness" "$scratch/$version/fixture/LSPatrol.asi" "$scratch/$version/fixture" > "$version/run.log" 2>&1 || true
             grep -Ei 'registered|config.ini|Callouts|Callout.log|exception|too long|fault|Windows function.*(rdbuf|stream|egptr)|Harness result|aborted' "$version/run.log" | head -120 || true
-            if [ -s "$version/fixture/LSPatrol/Callout.log" ]; then grep -Ei 'loaded|error|failed|count' "$version/fixture/LSPatrol/Callout.log" | tail -20 || true; fi
+            if [ -s "$version/fixture/LSPatrol/Callout.log" ]; then tail -22 "$version/fixture/LSPatrol/Callout.log"; fi
+            if [ -s "$version/fixture/LSPatrol/LSPatrol.log" ]; then tail -16 "$version/fixture/LSPatrol/LSPatrol.log"; fi
+            grep 'Windows function' "$version/run.log" | head -35 || true
             find "$version/fixture/LSPatrol" -maxdepth 1 -type f -exec wc -c {} +
           done
