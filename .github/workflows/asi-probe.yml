@@ -52,6 +52,9 @@ jobs:
           static void logLine(const char *line) { puts(line); fflush(stdout); }
           static bool key(int code) { return keys[code]; }
           static bool invoke(uint64_t hash, uint64_t args, uint32_t count, uint64_t result) {
+            if (hash == 0xd80958fc74e988a6ull || hash == 0x7239b21a38f536baull || hash == 0x5e9564d8246b909aull) {
+              memory[result] = 1;
+            }
             if (hash == 0x9cd27b0045628463ull) { // GET_GAME_TIMER
               static uint32_t time;
               time += 20;
@@ -75,13 +78,13 @@ jobs:
             fclose(file);
             if (!pg_asi_load("LSPatrol.asi", argv[2], bytes, len)) return 5;
             free(bytes);
-            for (int frame = 0; frame < 180; ++frame) {
-              if (frame == 45 || frame == 46) {
-                keys[0x79] = frame == 45;
+            for (int frame = 0; frame < 1800; ++frame) {
+              if (frame == 1400 || frame == 1401) {
+                keys[0x79] = frame == 1400;
                 pg_asi_key(0x79, keys[0x79]);
               }
               pg_asi_tick();
-              usleep(16667);
+              usleep(3000);
             }
             PGAsiKeyInfo info = {0};
             pg_asi_key_info(&info);
@@ -116,14 +119,17 @@ jobs:
             echo "=== $version ==="
             mkdir -p "$version/src" "$version/fixture"
             unzip -qq original.zip 'LSPatrol.asi' 'LSPatrol/Callouts/*' -d "$version/fixture"
-            rev=19ce47a
+            rev=96aaed9
             if [ "$version" = v7 ]; then rev=0fc75ec; fi
             for path in NativeASI.c NativeASI.h NativeASIRuntime.inc; do
               git -C "$GITHUB_WORKSPACE" show "$rev:app/Source/$path" > "$version/src/$path"
             done
             python3 trace.py "$version/src"
             clang -O2 -w -I"$version/src" -I"$GITHUB_WORKSPACE/app/Vendor/blink" harness.c "$version/src/NativeASI.c" "$RUNNER_TEMP/blink-objects/libblink.a" -o "$version/harness"
-            ASI_TRACE=1 "$version/harness" "$scratch/$version/fixture/LSPatrol.asi" "$scratch/$version/fixture" > "$version/run.log" 2>&1 || true
+            ASI_TRACE=1 "$version/harness" "$scratch/$version/fixture/LSPatrol.asi" "$scratch/$version/fixture" > "$version/run.log" 2>&1
+            test -s "$version/fixture/LSPatrol/config.ini"
+            test -s "$version/fixture/LSPatrol/Callout.log"
+            ! grep -Ei 'too long|write to config.ini failed|no callouts installed' "$version/run.log"
             grep -Ei 'registered|config.ini|Callouts|Callout.log|exception|too long|fault|Windows function.*(rdbuf|stream|egptr)|Harness result|aborted' "$version/run.log" | head -120 || true
             if [ -s "$version/fixture/LSPatrol/Callout.log" ]; then tail -22 "$version/fixture/LSPatrol/Callout.log"; fi
             if [ -s "$version/fixture/LSPatrol/LSPatrol.log" ]; then tail -16 "$version/fixture/LSPatrol/LSPatrol.log"; fi
