@@ -52,7 +52,9 @@ jobs:
           static void logLine(const char *line) { puts(line); fflush(stdout); }
           static bool key(int code) { return keys[code]; }
           static bool invoke(uint64_t hash, uint64_t args, uint32_t count, uint64_t result) {
-            if (hash == 0xd80958fc74e988a6ull || hash == 0x7239b21a38f536baull || hash == 0x5e9564d8246b909aull) {
+            if (hash == 0xd80958fc74e988a6ull || hash == 0x7239b21a38f536baull || hash == 0x5e9564d8246b909aull ||
+                hash == 0x35b9e0803292b641ull || hash == 0xc0296a2edf545e92ull ||
+                hash == 0x75816577fea6dad5ull || hash == 0x19aac8f07bfec53eull) {
               memory[result] = 1;
             }
             if (hash == 0x9cd27b0045628463ull) { // GET_GAME_TIMER
@@ -115,11 +117,12 @@ jobs:
           f.write_text(s)
           
           PY_SOURCE
-          for version in fixed; do
+          for version in fresh existing; do
             echo "=== $version ==="
             mkdir -p "$version/src" "$version/fixture"
             unzip -qq original.zip 'LSPatrol.asi' 'LSPatrol/Callouts/*' -d "$version/fixture"
             rev=96aaed9
+            if [ "$version" = existing ]; then touch "$version/fixture/LSPatrol/config.ini" "$version/fixture/LSPatrol/character.ini"; fi
             if [ "$version" = v7 ]; then rev=0fc75ec; fi
             for path in NativeASI.c NativeASI.h NativeASIRuntime.inc; do
               git -C "$GITHUB_WORKSPACE" show "$rev:app/Source/$path" > "$version/src/$path"
@@ -135,4 +138,6 @@ jobs:
             if [ -s "$version/fixture/LSPatrol/LSPatrol.log" ]; then tail -16 "$version/fixture/LSPatrol/LSPatrol.log"; fi
             grep 'Windows function' "$version/run.log" | head -35 || true
             find "$version/fixture/LSPatrol" -maxdepth 1 -type f -exec wc -c {} +
+            grep -E 'Loaded 16 callout\(s\)' "$version/fixture/LSPatrol/Callout.log"
+            grep -E 'Harness result: keyboard=1 menu=1 F10=[1-9]' "$version/run.log"
           done
