@@ -1,4 +1,4 @@
-# Nova V7 Online
+# Nova V8
 
 Public source snapshot of the launcher, bridges and server. Game inputs and private build history are excluded. The GitHub Actions workflow compiles a pinned private source revision and uploads a direct IPA.
 
