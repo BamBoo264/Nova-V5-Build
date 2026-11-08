@@ -1,15 +1,15 @@
-name: Build Nova V7 UDP IPA
+name: Build Nova V8 UDP IPA
 on:
   workflow_dispatch:
     inputs:
       source_sha:
-        description: Full commit SHA of the Nova V7 source
+        description: Full commit SHA of the Nova V8 source
         required: true
         type: string
 permissions:
   contents: read
 concurrency:
-  group: nova-v7-ipa
+  group: nova-v8-ipa
   cancel-in-progress: true
 jobs:
   build:
@@ -58,7 +58,7 @@ jobs:
         run: python3 tools/package_variants.py
       - uses: actions/upload-artifact@v4
         with:
-          name: Nova-V7-UDP
-          path: Mugoat-Nova-NativeRuntime-V7-UDP.ipa
+          name: Nova-V8-UDP
+          path: Mugoat-Nova-NativeRuntime-V8-UDP.ipa
           if-no-files-found: error
           retention-days: 14
