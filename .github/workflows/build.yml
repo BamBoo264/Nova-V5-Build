@@ -1,9 +1,9 @@
-name: Build Nova V8.2 UDP IPA
+name: Build Nova V8.3 UDP IPA
 on:
   workflow_dispatch:
     inputs:
       source_sha:
-        description: Full commit SHA of the Nova V8.2 source
+        description: Full commit SHA of the Nova V8.3 source
         required: true
         type: string
 permissions:
@@ -40,6 +40,7 @@ jobs:
           cd app
           python3 Scripts/prepare.py --mirror "$RUNNER_TEMP/game-files"
           python3 Scripts/verify_nova_native_base.py
+          grep -Eq '^[[:space:]]*\{0x35b9e0803292b641ull,' Generated/asi-natives.inc
       - name: Compile Nova ARM64 Release
         env:
           JOBS: '3'
@@ -53,7 +54,7 @@ jobs:
         run: python3 tools/package_variants.py
       - uses: actions/upload-artifact@v4
         with:
-          name: Nova-V8.2-UDP
-          path: Mugoat-Nova-NativeRuntime-V8.2-UDP.ipa
+          name: Nova-V8.3-UDP
+          path: Mugoat-Nova-NativeRuntime-V8.3-UDP.ipa
           if-no-files-found: error
           retention-days: 14
